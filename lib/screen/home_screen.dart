@@ -10,6 +10,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  bool choolCheckDone = false;
+  GoogleMapController? mapController;
+
   // latitude, longitude
   static final LatLng companyLatLng = LatLng(
     37.5233273,
@@ -22,16 +25,38 @@ class _HomeScreenState extends State<HomeScreen> {
     zoom: 15,
   );
 
-  static final double distance = 100;
-  static final Circle circle = Circle(
-    circleId: CircleId('circle'), // 원의 고유 아이디
+  static final double okDistance = 100;
+  static final Circle withinDistanceCircle = Circle(
+    circleId: CircleId('withinDistanceCircle'), // 원의 고유 아이디
     center: companyLatLng, // 원의 중심 값
     fillColor: Colors.blue.withOpacity(0.5), // 원의 색
-    radius: distance, // 원의 반지름
+    radius: okDistance, // 원의 반지름
     strokeColor: Colors.blue, // 원 테두리 색
     strokeWidth: 1, // 원 테두리 두께
   );
 
+  static final Circle notWithinDistanceCircle = Circle(
+    circleId: CircleId('notWithinDistanceCircle'), // 원의 고유 아이디
+    center: companyLatLng, // 원의 중심 값
+    fillColor: Colors.red.withOpacity(0.5), // 원의 색
+    radius: okDistance, // 원의 반지름
+    strokeColor: Colors.red, // 원 테두리 색
+    strokeWidth: 1, // 원 테두리 두께
+  );
+
+  static final Circle checkDoneDistanceCircle = Circle(
+    circleId: CircleId('checkDoneDistanceCircle'), // 원의 고유 아이디
+    center: companyLatLng, // 원의 중심 값
+    fillColor: Colors.green.withOpacity(0.5), // 원의 색
+    radius: okDistance, // 원의 반지름
+    strokeColor: Colors.green, // 원 테두리 색
+    strokeWidth: 1, // 원 테두리 두께
+  );
+
+  static final Marker marker = Marker(
+    markerId: MarkerId('marker'),
+    position: companyLatLng,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -51,14 +76,47 @@ class _HomeScreenState extends State<HomeScreen> {
 
           // AsyncSnapshot(future 함수)의 리턴 값
           if (snapshot.data == '위치 권한이 허가되었습니다.') {
-            return Column(
-              children: [
-                _CustomGoogleMap(
-                  initialPosition: initialPosition,
-                ),
-                _ChoolCheckButton(),
-              ],
-            );
+            return StreamBuilder<Position>(
+                // position이 바뀔 때마다 실행, 위치 권한이 허가되어야만 해당 함수 실행 가능
+                stream: Geolocator.getPositionStream(),
+                builder: (context, snapshot) {
+                  bool isWithinRange = false;
+
+                  if (snapshot.hasData) {
+                    final start = snapshot.data!;
+                    final end = companyLatLng;
+                    final distance = Geolocator.distanceBetween(
+                      start.latitude,
+                      start.longitude,
+                      end.latitude,
+                      end.longitude,
+                    );
+
+                    if (distance < okDistance) {
+                      isWithinRange = true;
+                    }
+                  }
+
+                  return Column(
+                    children: [
+                      _CustomGoogleMap(
+                        initialPosition: initialPosition,
+                        circle: choolCheckDone
+                            ? checkDoneDistanceCircle
+                            : isWithinRange
+                                ? withinDistanceCircle
+                                : notWithinDistanceCircle,
+                        marker: marker,
+                        onMapCreated: onMapCreated,
+                      ),
+                      _ChoolCheckButton(
+                        isWithinRange: isWithinRange,
+                        choolCheckDone: choolCheckDone,
+                        onPressed: onChoolCheckPressed,
+                      ),
+                    ],
+                  );
+                });
           }
 
           return Center(
@@ -81,6 +139,31 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       backgroundColor: Colors.white,
+      actions: [
+        IconButton(
+          onPressed: () async {
+            if (mapController == null) {
+              print('mapController null');
+              return;
+            }
+
+            final location = await Geolocator.getCurrentPosition();
+
+            mapController!.animateCamera(
+              CameraUpdate.newLatLng(
+                LatLng(
+                  location.latitude,
+                  location.longitude,
+                ),
+              ),
+            );
+          },
+          color: Colors.blue,
+          icon: Icon(
+            Icons.my_location,
+          ),
+        ),
+      ],
     );
   }
 
@@ -107,13 +190,58 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return '위치 권한이 허가되었습니다.';
   }
+
+  // 값을 받아오고 싶으면, async & await를 사용해야 함
+  onChoolCheckPressed() async {
+    final result = await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('출근하기'),
+          content: Text('출근하시겠습니까?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                // dialog close & false return
+                Navigator.of(context).pop(false);
+              },
+              child: Text('취소'),
+            ),
+            TextButton(
+              onPressed: () {
+                // dialog close & true return
+                Navigator.of(context).pop(true);
+              },
+              child: Text('출근하기'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result) {
+      setState(() {
+        choolCheckDone = true;
+      });
+    }
+  }
+
+  onMapCreated(GoogleMapController controller) {
+    mapController = controller;
+  }
 }
 
 class _CustomGoogleMap extends StatelessWidget {
   final CameraPosition initialPosition;
+  final Circle circle;
+  final Marker marker;
+  final MapCreatedCallback onMapCreated;
 
   const _CustomGoogleMap({
     required this.initialPosition,
+    required this.circle,
+    required this.marker,
+    required this.onMapCreated,
     Key? key,
   }) : super(key: key);
 
@@ -126,19 +254,52 @@ class _CustomGoogleMap extends StatelessWidget {
         initialCameraPosition: initialPosition,
         myLocationEnabled: true,
         myLocationButtonEnabled: false,
+        circles: Set.from([circle]),
+        markers: Set.from([marker]),
+        onMapCreated: onMapCreated,
       ),
     );
   }
 }
 
 class _ChoolCheckButton extends StatelessWidget {
-  const _ChoolCheckButton({Key? key}) : super(key: key);
+  final bool isWithinRange;
+  final VoidCallback onPressed;
+  final bool choolCheckDone;
+
+  const _ChoolCheckButton({
+    required this.isWithinRange,
+    required this.onPressed,
+    required this.choolCheckDone,
+    Key? key,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: Text(
-        '출근',
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.timelapse_outlined,
+            size: 50.0,
+            color: choolCheckDone
+                ? Colors.green
+                : isWithinRange
+                    ? Colors.blue
+                    : Colors.red,
+          ),
+          const SizedBox(
+            height: 20.0,
+          ),
+          if (!choolCheckDone && isWithinRange) // false면 아래 버튼 hide
+            TextButton(
+              onPressed: onPressed,
+              child: Text(
+                '출근하기',
+              ),
+            ),
+        ],
       ),
     );
   }
